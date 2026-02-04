@@ -1,128 +1,153 @@
+import streamlit as st
 import whisper
-import pyaudio
-import wave
 import tempfile
 import os
+import logging
+from gtts import gTTS
 
-# Initialize Whisper model
-def load_model(model_name="base"):
-    print(f"Loading Whisper model '{model_name}'...")
-    model = whisper.load_model(model_name)
-    print("Model loaded successfully.")
-    return model
+# Set up logging
+logging.basicConfig(level=logging.DEBUG)
 
-# Record audio and save it to a .wav file
-def record_audio(filename, duration=5):
-    print("Recording audio...")
-    chunk = 1024  # Record in chunks of 1024 samples
-    sample_format = pyaudio.paInt16  # 16 bits per sample
-    channels = 1
-    rate = 44100  # Record at 44100 samples per second
+# Define the folder path for saving audio files
+SAVE_DIR = os.path.join(os.getcwd(), "project_audio_files")
 
-    p = pyaudio.PyAudio()
+os.makedirs(SAVE_DIR, exist_ok=True)
 
-    stream = p.open(format=sample_format,
-                    channels=channels,
-                    rate=rate,
-                    input=True,
-                    frames_per_buffer=chunk)
+# Initialize session state variables
+if 'model' not in st.session_state:
+    st.session_state.model = None
+if 'model_loaded' not in st.session_state:
+    st.session_state.model_loaded = False
+if 'uploaded_audio_path' not in st.session_state:
+    st.session_state.uploaded_audio_path = None
+if 'is_loading' not in st.session_state:
+    st.session_state.is_loading = False
 
-    frames = []
-
-    for _ in range(0, int(rate / chunk * duration)):
-        data = stream.read(chunk)
-        frames.append(data)
-
-    # Stop and close the stream
-    stream.stop_stream()
-    stream.close()
-    p.terminate()
-
-    # Save the recorded data as a .wav file
-    with wave.open(filename, 'wb') as wf:
-        wf.setnchannels(channels)
-        wf.setsampwidth(p.get_sample_size(sample_format))
-        wf.setframerate(rate)
-        wf.writeframes(b''.join(frames))
-    
-    print(f"Recording saved to {filename}")
-
-# Upload and verify an existing audio file
-def upload_audio(filename):
-    if not os.path.exists(filename):
-        print(f"❌ File not found at path: {filename}")
-        return None
-    print(f"✅ Audio file '{filename}' loaded successfully.")
-    return filename
-
-# Translate audio using the Whisper model
-def translate_audio(model, audio_path):
-    print("Translating audio to English...")
+# Function to load the Whisper model
+def load_model(model_name):
     try:
-        transcription = model.transcribe(audio_path, task="translate")
-        transcribed_text = transcription["text"]
-        print("✅ Translation complete.")
-        return transcribed_text
+        st.session_state.model = whisper.load_model(model_name)
+        st.session_state.model_loaded = True
+        st.sidebar.success(f"Whisper Model '{model_name}' Loaded")
     except Exception as e:
-        print(f"❌ Error during translation: {e}")
-        return None
+        st.sidebar.error(f"Error loading model: {e}")
+        logging.error(f"Model loading error: {e}")
 
-# Save translation to a text file
-def save_translation(text, filename="translation.txt"):
-    with open(filename, "w") as f:
-        f.write(text)
-    print(f"📁 Translation saved to {filename}")
+# Function to save uploaded audio
+def save_uploaded_audio(uploaded_file):
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio_file:
+            temp_audio_file.write(uploaded_file.read())
+            st.session_state.uploaded_audio_path = temp_audio_file.name
+        return st.session_state.uploaded_audio_path
+    except Exception as e:
+        st.sidebar.error(f"Error saving audio file: {e}")
+        logging.error(f"Audio save error: {e}")
 
-# Main function to select options and perform tasks
-def main():
-    model_name = input("Enter the Whisper model size to load (e.g., tiny, base, small, medium, large): ")
-    model = load_model(model_name)
-    
-    print("\nChoose an option:")
-    print("1. 🎙️  Record audio")
-    print("2. 📂 Upload existing audio file")
-    option = input("Enter option (1 or 2): ")
+# Function to map detected language codes to full language names
+def language_code_to_name(code):
+    code_map = {
+        "en": "English", "hi": "Hindi", "fr": "French", "te": "Telugu", "es": "Spanish",
+        "de": "German", "ja": "Japanese", "ta": "Tamil", "bn": "Bengali", "mr": "Marathi",
+        "gu": "Gujarati", "pa": "Punjabi", "ml": "Malayalam", "or": "Odia", "ur": "Urdu", 
+        "pt": "Portuguese"
+    }
+    return code_map.get(code, "Unknown Language")  # Default to Unknown Language
 
-    audio_file_path = None
+# Main Content: Welcome Image, Title, and Instructions
+st.markdown("""
+    <style>
+        body { background-color: #1c1c1c; }
+        .futuristic-box { background: linear-gradient(to right, #0f0c29, #302b63, #24243e); padding: 20px; border-radius: 15px; box-shadow: 0px 6px 15px rgba(0, 0, 0, 0.4); color: #00ffff; font-family: 'Courier New', Courier, monospace; }
+        h1, h2, h3 { color: #00ffff; }
+    </style>
+    <div style="text-align: center;">
+        <img src="https://cdn.prod.website-files.com/5fac161927bf86485ba43fd0/64705e36d6c173f75626cf6b_Blog-Cover-2022_02_How-to-Transcribe-Audio-to-Text-(Automatically-_-For-Free).jpeg" alt="welcome image" style="width: 100%; max-width: 600px; border-radius: 15px;">
+        <h1 style="font-size: 50px; font-family: 'Orbitron', sans-serif; text-shadow: 2px 2px 10px #000000; margin-top: 10px;">
+            Convert All Languages to English
+        </h1>
+        <p style="font-size: 18px; color: #00ffff;">
+            Heyyy, upload your audio, get it in the form of text.
+        </p>
+        <img src="https://media.tenor.com/J8LIZC2OVOoAAAAj/rob%C3%B4.gif" alt="robot gif" style="width: 200px; margin-top: 20px;">
+    </div>
+""", unsafe_allow_html=True)
 
-    if option == "1":
-        try:
-            duration = int(input("Enter recording duration in seconds: "))
-        except ValueError:
-            print("❌ Invalid duration. Exiting.")
-            return
-        audio_file_path = tempfile.mktemp(suffix=".wav")
-        record_audio(audio_file_path, duration)
+# Sidebar: Model selection and audio upload
+st.sidebar.header("Model Selection")
+model_options = ["tiny", "base", "small", "medium", "large"]
+model_name = st.sidebar.selectbox("Select Whisper Model", model_options)
 
-    elif option == "2":
-        print("⚠️  Make sure the file path is correct and includes the extension (e.g., sample.wav or sample.mp3).")
-        user_path = input("Enter the full path or filename of the audio file to upload: ").strip()
-        audio_file_path = upload_audio(user_path)
+# Load model button
+if st.sidebar.button("Load Model"):
+    load_model(model_name)
 
-    else:
-        print("❌ Invalid option selected.")
-        return
+# Sidebar for uploading pre-recorded audio
+st.sidebar.header("Upload Audio")
+audio_file = st.file_uploader("Upload Audio", type=["wav", "mp3", "m4a"])
 
-    # Proceed only if valid file was loaded or recorded
-    if audio_file_path:
-        translated_text = translate_audio(model, audio_file_path)
-        if translated_text:
-            print("\n📝 Translated Text:\n", translated_text)
+if audio_file:
+    uploaded_audio_path = save_uploaded_audio(audio_file)
+    st.sidebar.success("Audio file uploaded and saved.")
 
-            save_option = input("\nDo you want to save the translation to a text file? (y/n): ")
-            if save_option.lower() == "y":
-                save_translation(translated_text)
-        else:
-            print("❌ Translation failed.")
-    else:
-        print("❌ No valid audio file provided.")
+# Play original audio playback
+if st.session_state.uploaded_audio_path:
+    st.sidebar.audio(st.session_state.uploaded_audio_path)
 
-    # Clean up temporary file if recorded
-    if option == "1" and audio_file_path and os.path.exists(audio_file_path):
-        os.remove(audio_file_path)
-        print(f"🧹 Temporary file deleted: {audio_file_path}")
+# Translation section
+if st.session_state.model_loaded and st.session_state.uploaded_audio_path:
+    st.sidebar.header("Translate Audio")
+    if st.sidebar.button("Translate Audio"):
+        st.session_state.is_loading = True
+        with st.spinner('Translating audio...'):  # Add spinner for loading
+            try:
+                # Transcribe and detect language
+                result = st.session_state.model.transcribe(st.session_state.uploaded_audio_path, task="translate")
+                transcribed_text = result["text"]
+                detected_language_code = result["language"]
 
-# Run the main function
+                # Log the transcribed text for debugging
+                logging.debug(f"Transcribed Text: {transcribed_text}")
 
-if __name__ == "__main__":
-    main()
+                # Convert language code to full name
+                detected_language_name = language_code_to_name(detected_language_code)
+
+                # Display detected language and translated text
+                st.sidebar.success("Translation complete")
+                st.markdown(f"""<div class="futuristic-box"><h3>Translated Text:</h3><p>{transcribed_text}</p></div>""", unsafe_allow_html=True)
+                st.markdown(f"""<div class="futuristic-box"><h3>Detected Language:</h3><p>{detected_language_name}</p></div>""", unsafe_allow_html=True)
+
+                # Convert the translated text to English speech and save it
+                output_audio_path = os.path.join(SAVE_DIR, "translated_audio.mp3")
+                tts = gTTS(text=transcribed_text, lang="en")
+                tts.save(output_audio_path)
+
+                # Display the title above the AI voice player
+                st.markdown('<h2 style="text-align: center; font-family: \'Orbitron\', sans-serif; color: #00ffff;">Echo of AI: Hear It in English</h2>', unsafe_allow_html=True)
+
+                # Play the translated audio in the Streamlit app
+                with open(output_audio_path, "rb") as audio_file:
+                    audio_bytes = audio_file.read()
+                    st.audio(audio_bytes, format="audio/mp3")
+
+                # Download options
+                st.sidebar.download_button(
+                    label="Download Translated Audio",
+                    data=open(output_audio_path, "rb").read(),
+                    file_name="translated_audio.mp3",
+                    mime="audio/mp3"
+                )
+
+                # Download translated text option
+                st.sidebar.download_button(
+                    label="Download Translated Text",
+                    data=transcribed_text,
+                    file_name="translated_text.txt",
+                    mime="text/plain"
+                )
+
+            except Exception as e:
+                st.sidebar.error(f"Error translating audio: {e}")
+                logging.error(f"Translation error: {e}")
+            finally:
+                st.session_state.is_loading = False
